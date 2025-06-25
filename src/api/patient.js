@@ -27,3 +27,9 @@ export function deletePatient(healthcardId) {
 
   )
 } 
+export function recharge(data) {
+  return http.post('/patient/recharge', {
+    healthcardId: String(data.healthcardId), // 关键修改：参数名与后端一致
+    amount: parseFloat(data.amount)
+  }, jsonConfig)
+}

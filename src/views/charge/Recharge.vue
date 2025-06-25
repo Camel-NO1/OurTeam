@@ -1,52 +1,45 @@
 <template>
   <div class="recharge-container">
-    <h1>充值信息</h1>
+    <h1>就诊卡充值</h1>
     
     <div class="recharge-content">
       <!-- 左侧：患者信息 -->
       <div class="patient-info">
         <div class="card-input">
           <el-input 
-            v-model="cardNumber" 
+            v-model.number="healthcardId" 
             placeholder="请输入就诊卡号" 
             clearable
+            type="number"
             @change="fetchPatientInfo"
           />
-          <el-button type="primary" @click="swipeCard">刷卡</el-button>
+          <el-button type="primary" @click="fetchPatientInfo" :loading="loading">查询</el-button>
         </div>
         
-        <el-card class="info-card" v-if="patientInfo.medicalCardNumber">
+        <el-card class="info-card" v-if="patientInfo.healthcard_id">
           <div class="info-item">
             <span class="label">就诊卡号：</span>
-            <span class="value">{{ patientInfo.medicalCardNumber }}</span>
+            <span class="value">{{ patientInfo.healthcard_id }}</span>
           </div>
           <div class="info-item">
             <span class="label">姓名：</span>
-            <span class="value">{{ patientInfo.name }}</span>
+            <span class="value">{{ patientInfo.name || '未知' }}</span>
           </div>
           <div class="info-item">
-            <span class="label">年龄：</span>
-            <span class="value">{{ patientInfo.age }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">建档操作员：</span>
-            <span class="value">{{ patientInfo.operator }}</span>
+            <span class="label">证件号：</span>
+            <span class="value">{{ patientInfo.identification_id || '未知' }}</span>
           </div>
           <div class="info-item">
             <span class="label">账户余额(元)：</span>
-            <span class="value">{{ patientInfo.balance.toFixed(2) }}</span>
+            <span class="value">{{ (patientInfo.healthcard_balance || 0).toFixed(2) }}</span>
           </div>
           <div class="info-item">
             <span class="label">性别：</span>
-            <span class="value">{{ patientInfo.gender }}</span>
+            <span class="value">{{ formatGender(patientInfo.gender) }}</span>
           </div>
           <div class="info-item">
-            <span class="label">患者性质：</span>
-            <span class="value">{{ patientInfo.patientType }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">建档时间：</span>
-            <span class="value">{{ patientInfo.createTime }}</span>
+            <span class="label">联系电话：</span>
+            <span class="value">{{ patientInfo.phonenumber || '未知' }}</span>
           </div>
         </el-card>
       </div>
@@ -59,8 +52,9 @@
             v-for="amount in quickAmounts" 
             :key="amount" 
             @click="selectAmount(amount)"
+            :type="selectedAmount === amount ? 'primary' : ''"
           >
-            {{ amount }}
+            {{ amount }}元
           </el-button>
         </div>
         
@@ -69,12 +63,21 @@
           :min="1" 
           :max="10000" 
           :precision="2" 
+          :step="100"
           placeholder="自定义金额"
           class="custom-amount"
+          @change="handleCustomAmountChange"
         />
         
         <div class="action-buttons">
-          <el-button type="primary" @click="confirmRecharge">确认充值</el-button>
+          <el-button 
+            type="primary" 
+            @click="confirmRecharge"
+            :loading="loading"
+            :disabled="!canRecharge"
+          >
+            确认充值
+          </el-button>
           <el-button @click="resetForm">重置</el-button>
         </div>
       </div>
@@ -83,55 +86,67 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { queryPatients, recharge } from '@/api/patient'
 
 // 就诊卡号输入
-const cardNumber = ref('')
+const healthcardId = ref('')
 
 // 患者信息
-const patientInfo = ref({
-  medicalCardNumber: '',
-  name: '',
-  age: '',
-  operator: '',
-  balance: 0,
-  gender: '',
-  patientType: '',
-  createTime: ''
-})
+const patientInfo = ref({})
+const loading = ref(false)
 
 // 充值金额相关
 const quickAmounts = ref([100, 300, 500, 1000, 3000, 5000])
-const customAmount = ref(0)
-const selectedAmount = ref(0)
+const customAmount = ref(null)
+const selectedAmount = ref(null)
 
-// 刷卡操作
-const swipeCard = () => {
-  // 模拟刷卡操作，实际项目中可能是调用读卡器API
-  if (!cardNumber.value) {
-    cardNumber.value = '530101199805666666' // 模拟刷卡得到的卡号
+// 是否可以充值
+const canRecharge = computed(() => {
+  return patientInfo.value.healthcard_id && (customAmount.value > 0)
+})
+
+// 格式化性别显示
+const formatGender = (gender) => {
+  const genderMap = {
+    '1': '男',
+    '2': '女',
+    'male': '男',
+    'female': '女',
+    'unknown': '未知'
   }
-  fetchPatientInfo()
+  return genderMap[gender] || gender || '未知'
 }
 
 // 获取患者信息
-const fetchPatientInfo = () => {
-  if (!cardNumber.value) {
-    ElMessage.warning('请输入或刷卡获取就诊卡号')
+const fetchPatientInfo = async () => {
+  if (!healthcardId.value) {
+    ElMessage.warning('请输入就诊卡号')
     return
   }
-  
-  // 模拟从后端获取患者信息
-  patientInfo.value = {
-    medicalCardNumber: cardNumber.value,
-    name: '张三',
-    age: 35,
-    operator: '管理员',
-    balance: 1000.50,
-    gender: '男',
-    patientType: '普通患者',
-    createTime: '2023-01-15 10:30:25'
+
+  try {
+    loading.value = true
+    const response = await queryPatients({
+      healthcardId: healthcardId.value
+    })
+    
+    if (Array.isArray(response?.data)) {
+      if (response.data.length > 0) {
+        patientInfo.value = response.data[0]
+        ElMessage.success('患者信息查询成功')
+      } else {
+        ElMessage.warning('未找到该就诊卡号的患者信息')
+        patientInfo.value = {}
+      }
+    }
+  } catch (error) {
+    console.error('查询失败:', error)
+    ElMessage.error(`查询失败: ${error.response?.data?.message || error.message || '未知错误'}`)
+    patientInfo.value = {}
+  } finally {
+    loading.value = false
   }
 }
 
@@ -141,44 +156,64 @@ const selectAmount = (amount) => {
   customAmount.value = amount
 }
 
+// 自定义金额变化时处理
+const handleCustomAmountChange = (value) => {
+  if (value && quickAmounts.value.includes(value)) {
+    selectedAmount.value = value
+  } else {
+    selectedAmount.value = null
+  }
+}
+
 // 确认充值
-const confirmRecharge = () => {
-  if (!patientInfo.value.medicalCardNumber) {
-    ElMessage.warning('请先获取患者信息')
-    return
+const confirmRecharge = async () => {
+  if (!canRecharge.value) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确认要为就诊卡 ${healthcardId.value} 充值 ${customAmount.value} 元吗?`,
+      '确认充值',
+      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
+    )
+
+    loading.value = true
+    const response = await recharge({
+      healthcardId: String(healthcardId.value), // 使用后端期望的参数名
+      amount: parseFloat(customAmount.value)
+    })
+
+    if (response?.success) {
+      ElMessage.success(`充值成功！当前余额: ${response.newBalance.toFixed(2)} 元`)
+      patientInfo.value.healthcard_balance = response.newBalance
+      resetAmount()
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('充值失败:', error)
+      let errorMsg = '充值失败'
+      if (error.response) {
+        errorMsg += `: ${error.response.data?.message || error.response.statusText}`
+      } else {
+        errorMsg += `: ${error.message}`
+      }
+      ElMessage.error(errorMsg)
+    }
+  } finally {
+    loading.value = false
   }
-  
-  if (customAmount.value <= 0) {
-    ElMessage.warning('请输入有效的充值金额')
-    return
-  }
-  
-  // 这里应该是调用充值API
-  ElMessage.success(`成功充值 ${customAmount.value} 元`)
-  
-  // 更新余额显示
-  patientInfo.value.balance += customAmount.value
-  
-  // 重置金额选择
-  selectedAmount.value = 0
-  customAmount.value = 0
+}
+
+// 重置金额选择
+const resetAmount = () => {
+  selectedAmount.value = null
+  customAmount.value = null
 }
 
 // 重置表单
 const resetForm = () => {
-  cardNumber.value = ''
-  patientInfo.value = {
-    medicalCardNumber: '',
-    name: '',
-    age: '',
-    operator: '',
-    balance: 0,
-    gender: '',
-    patientType: '',
-    createTime: ''
-  }
-  selectedAmount.value = 0
-  customAmount.value = 0
+  healthcardId.value = ''
+  patientInfo.value = {}
+  resetAmount()
 }
 </script>
 
@@ -197,16 +232,22 @@ const resetForm = () => {
 
 .patient-info {
   flex: 1;
+  min-width: 400px;
 }
 
 .recharge-amount {
   flex: 1;
+  min-width: 400px;
 }
 
 .card-input {
   display: flex;
   gap: 10px;
   margin-bottom: 20px;
+}
+
+.card-input .el-input {
+  flex: 1;
 }
 
 .info-card {
@@ -222,10 +263,12 @@ const resetForm = () => {
 .info-item .label {
   font-weight: bold;
   width: 120px;
+  color: #666;
 }
 
 .info-item .value {
   flex: 1;
+  color: #333;
 }
 
 .quick-amount {
@@ -256,15 +299,19 @@ const resetForm = () => {
 .action-buttons .el-button {
   width: 120px;
   height: 40px;
+  font-size: 16px;
 }
 
 h1 {
   color: #333;
   margin-bottom: 30px;
+  text-align: center;
+  font-size: 24px;
 }
 
 h3 {
   color: #666;
   margin-bottom: 15px;
+  font-size: 18px;
 }
 </style>
